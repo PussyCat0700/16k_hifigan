@@ -39,7 +39,6 @@ FINETUNE_LEARNING_RATE = 1e-4
 BETAS = (0.8, 0.99)
 LEARNING_RATE_DECAY = 0.999
 WEIGHT_DECAY = 1e-5
-EPOCHS = 3100
 LOG_INTERVAL = 5
 VALIDATION_INTERVAL = 1000
 NUM_GENERATED_EXAMPLES = 10
@@ -157,7 +156,7 @@ def train_model(rank, world_size, args):
     if args.finetune:
         global_step, best_loss = 0, float("inf")
 
-    n_epochs = EPOCHS
+    n_epochs = int(args.max_updates/(len(train_loader)*world_size))
     start_epoch = global_step // len(train_loader) + 1
 
     logger.info("**" * 40)
@@ -352,6 +351,8 @@ if __name__ == "__main__":
     logger.handlers.clear()
 
     world_size = torch.cuda.device_count()
+    max_updates_allowed = 1_000_000 if not args.finetune else 500_000
+    args.max_updates = max_updates_allowed
     mp.spawn(
         train_model,
         args=(world_size, args),
