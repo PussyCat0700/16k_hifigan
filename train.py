@@ -1,5 +1,6 @@
 import argparse
 import logging
+import os
 from pathlib import Path
 
 import torch
@@ -12,6 +13,7 @@ from torch.utils.data.distributed import DistributedSampler
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
+import wandb
 
 from hifigan.generator import HifiganGenerator
 from hifigan.discriminator import (
@@ -45,6 +47,10 @@ CHECKPOINT_INTERVAL = 5000
 
 
 def train_model(rank, world_size, args):
+    if rank==0 and args.run_name is not None:
+        proj_name = os.path.basename(os.path.abspath(args.checkpoint_dir))
+        wandb.init(project=proj_name, name=args.run_name, sync_tensorboard=True)
+    
     dist.init_process_group(
         "nccl",
         rank=rank,
@@ -325,6 +331,11 @@ if __name__ == "__main__":
         "--finetune",
         help="whether to finetune (note that a resume path must be given)",
         action="store_true",
+    )
+    parser.add_argument(
+        "--run_name",
+        help="wandb run name",
+        type=str,
     )
     args = parser.parse_args()
 
