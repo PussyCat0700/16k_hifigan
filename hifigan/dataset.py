@@ -12,23 +12,25 @@ import torchaudio.transforms as transforms
 
 
 class LogMelSpectrogram(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, n_fft=512, num_mels=128, hop_size=160, win_size=400):
         super().__init__()
+        self.n_fft=n_fft
+        self.hop_size=hop_size
         self.melspctrogram = transforms.MelSpectrogram(
             sample_rate=16000,
-            n_fft=1024,
-            win_length=1024,
-            hop_length=160,
+            n_fft=self.n_fft,
+            win_length=win_size,
+            hop_length=self.hop_size,
             center=False,
             power=1.0,
             norm="slaney",
             onesided=True,
-            n_mels=128,
+            n_mels=num_mels,
             mel_scale="slaney",
         )
 
     def forward(self, wav):
-        wav = F.pad(wav, ((1024 - 160) // 2, (1024 - 160) // 2), "reflect")
+        wav = F.pad(wav, ((self.n_fft-self.hop_size) // 2, (self.n_fft-self.hop_size) // 2), "reflect")
         mel = self.melspctrogram(wav)
         logmel = torch.log(torch.clamp(mel, min=1e-5))
         return logmel
@@ -55,12 +57,11 @@ class MelDataset(Dataset):
         self.finetune = finetune
 
         suffix = ".wav" if not finetune else ".npy"
-        pattern = f"train/**/*{suffix}" if train else f"dev/**/*{suffix}"
-
-        self.metadata = [
-            path.relative_to(self.data_dir).with_suffix("")
-            for path in self.data_dir.rglob(pattern)
-        ]
+        file_path = "training.txt" if train else "validation.txt"
+        file_path = root / file_path
+        with open(file_path, "r") as f:
+            self.metadata = f.readlines()
+        self.metadata = [x.split("|")[0].strip()+suffix for x in self.metadata]
 
         self.logmel = LogMelSpectrogram()
 
@@ -92,7 +93,7 @@ class MelDataset(Dataset):
             frame_offset = random.randint(0, max(frame_diff, 0))
 
         wav, _ = torchaudio.load(
-            filepath=wav_path.with_suffix(".wav"),
+            wav_path.with_suffix(".wav"),
             frame_offset=frame_offset if self.train else 0,
             num_frames=self.segment_length if self.train else -1,
         )

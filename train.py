@@ -11,6 +11,7 @@ import torch.distributed as dist
 from torch.utils.data.distributed import DistributedSampler
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
+from tqdm import tqdm
 
 from hifigan.generator import HifiganGenerator
 from hifigan.discriminator import (
@@ -166,7 +167,8 @@ def train_model(rank, world_size, args):
         generator.train()
         discriminator.train()
         average_loss_mel = average_loss_discriminator = average_loss_generator = 0
-        for i, (wavs, mels, tgts) in enumerate(train_loader, 1):
+        pbar = tqdm(train_loader)
+        for i, (wavs, mels, tgts) in enumerate(pbar, 1):
             wavs, mels, tgts = wavs.to(rank), mels.to(rank), tgts.to(rank)
 
             # Discriminator
