@@ -14,6 +14,7 @@ import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
 from tqdm import tqdm
 import wandb
+from hifigan.constants import MEL_SPECTROGRAM_MODE, UNIT_MODE
 
 from hifigan.generator import HifiganGenerator
 from hifigan.discriminator import (
@@ -22,7 +23,7 @@ from hifigan.discriminator import (
     discriminator_loss,
     generator_loss,
 )
-from hifigan.dataset import MelDataset, LogMelSpectrogram
+from hifigan.dataset import HuBERTLabelDataset, MelDataset, LogMelSpectrogram
 from hifigan.utils import load_checkpoint, save_checkpoint, plot_spectrogram
 
 
@@ -33,6 +34,8 @@ logger = logging.getLogger(__name__)
 BATCH_SIZE = 8
 SEGMENT_LENGTH = 8320
 HOP_LENGTH = 160
+HOP_LENGTH_HUBERT = 320
+KMEANS_CLASSES = 2000
 SAMPLE_RATE = 16000
 BASE_LEARNING_RATE = 2e-4
 FINETUNE_LEARNING_RATE = 1e-4
@@ -74,7 +77,10 @@ def train_model(rank, world_size, args):
 
     writer = SummaryWriter(log_dir) if rank == 0 else None
 
-    generator = HifiganGenerator().to(rank)
+    if args.mode == MEL_SPECTROGRAM_MODE:
+        generator = HifiganGenerator().to(rank)
+    elif args.mode == UNIT_MODE:
+        generator = HifiganGenerator(unit_nums=KMEANS_CLASSES, upsample_kernel_sizes=(20, 8, 8, 4), upsample_factors=(10, 4, 4, 2)).to(rank)
     discriminator = HifiganDiscriminator().to(rank)
 
     generator = DDP(generator, device_ids=[rank])
@@ -99,39 +105,61 @@ def train_model(rank, world_size, args):
     scheduler_discriminator = optim.lr_scheduler.ExponentialLR(
         optimizer_discriminator, gamma=LEARNING_RATE_DECAY
     )
-
-    train_dataset = MelDataset(
-        root=args.dataset_dir,
-        segment_length=SEGMENT_LENGTH,
-        sample_rate=SAMPLE_RATE,
-        hop_length=HOP_LENGTH,
-        train=True,
-        finetune=args.finetune,
-    )
+    common_args = {
+        'root':args.dataset_dir,
+        'segment_length':SEGMENT_LENGTH,
+        'sample_rate':SAMPLE_RATE,
+    }
+    common_train_args = {
+        'train':True,
+        **common_args
+    }
+    common_valid_args = {
+        'train':False,
+        **common_args
+    }
+    if args.mode == MEL_SPECTROGRAM_MODE:
+        train_dataset = MelDataset(
+            finetune=args.finetune,
+            hop_length=HOP_LENGTH,
+            **common_train_args,
+        )
+    elif args.mode == UNIT_MODE:
+        train_dataset = HuBERTLabelDataset(
+            sub_dirname=args.km_subdir,
+            num_classes=KMEANS_CLASSES,
+            hop_length=HOP_LENGTH_HUBERT,
+            **common_train_args,
+        )
     train_sampler = DistributedSampler(train_dataset, drop_last=True)
     train_loader = DataLoader(
         train_dataset,
         batch_size=BATCH_SIZE,
         sampler=train_sampler,
-        num_workers=8,
+        num_workers=8 if world_size>1 else 0,
         pin_memory=True,
         shuffle=False,
         drop_last=True,
     )
 
-    validation_dataset = MelDataset(
-        root=args.dataset_dir,
-        segment_length=SEGMENT_LENGTH,
-        sample_rate=SAMPLE_RATE,
-        hop_length=HOP_LENGTH,
-        train=False,
-        finetune=args.finetune,
-    )
+    if args.mode == MEL_SPECTROGRAM_MODE:
+        validation_dataset = MelDataset(
+            finetune=args.finetune,
+            hop_length=HOP_LENGTH,
+            **common_valid_args,
+        )
+    elif args.mode == UNIT_MODE:
+        validation_dataset = HuBERTLabelDataset(
+            sub_dirname=args.km_subdir,
+            num_classes=KMEANS_CLASSES,
+            hop_length=HOP_LENGTH_HUBERT,
+            **common_valid_args,
+        )
     validation_loader = DataLoader(
         validation_dataset,
         batch_size=1,
         shuffle=False,
-        num_workers=8,
+        num_workers=8 if world_size>1 else 0,
         pin_memory=True,
     )
 
@@ -173,13 +201,13 @@ def train_model(rank, world_size, args):
         discriminator.train()
         average_loss_mel = average_loss_discriminator = average_loss_generator = 0
         pbar = tqdm(train_loader)
-        for i, (wavs, mels, tgts) in enumerate(pbar, 1):
-            wavs, mels, tgts = wavs.to(rank), mels.to(rank), tgts.to(rank)
+        for i, (wavs, inputs, tgts) in enumerate(pbar, 1):
+            wavs, inputs, tgts = wavs.to(rank), inputs.to(rank), tgts.to(rank)
 
             # Discriminator
             optimizer_discriminator.zero_grad()
 
-            wavs_ = generator(mels.squeeze(1))
+            wavs_ = generator(inputs.squeeze(1))
             mels_ = melspectrogram(wavs_)
 
             scores, _ = discriminator(wavs)
@@ -236,11 +264,11 @@ def train_model(rank, world_size, args):
                 generator.eval()
 
                 average_validation_loss = 0
-                for j, (wavs, mels, tgts) in enumerate(validation_loader, 1):
-                    wavs, mels, tgts = wavs.to(rank), mels.to(rank), tgts.to(rank)
+                for j, (wavs, inputs, tgts) in enumerate(validation_loader, 1):
+                    wavs, inputs, tgts = wavs.to(rank), inputs.to(rank), tgts.to(rank)
 
                     with torch.no_grad():
-                        wavs_ = generator(mels.squeeze(1))
+                        wavs_ = generator(inputs.squeeze(1))
                         mels_ = melspectrogram(wavs_)
 
                         length = min(mels_.size(-1), tgts.size(-1))
@@ -296,6 +324,10 @@ def train_model(rank, world_size, args):
                             best=new_best,
                             logger=logger,
                         )
+                    if global_step > args.max_updates:
+                        break
+        if global_step > args.max_updates:
+            break
 
         scheduler_discriminator.step()
         scheduler_generator.step()
@@ -336,6 +368,11 @@ if __name__ == "__main__":
         help="wandb run name",
         type=str,
     )
+    parser.add_argument(
+        "--km_subdir",
+        help="subdir relative to dataset_dir containing .km hubert label text records",
+        type=str,
+    )
     args = parser.parse_args()
 
     # display training setup info
@@ -353,9 +390,13 @@ if __name__ == "__main__":
     world_size = torch.cuda.device_count()
     max_updates_allowed = 1_000_000 if not args.finetune else 500_000
     args.max_updates = max_updates_allowed
-    mp.spawn(
-        train_model,
-        args=(world_size, args),
-        nprocs=world_size,
-        join=True,
-    )
+    args.mode = UNIT_MODE if args.km_subdir is not None else MEL_SPECTROGRAM_MODE
+    if world_size > 1:
+        mp.spawn(
+            train_model,
+            args=(world_size, args),
+            nprocs=world_size,
+            join=True,
+        )
+    else:
+        train_model(0, world_size, args)

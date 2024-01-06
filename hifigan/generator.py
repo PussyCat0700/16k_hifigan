@@ -4,10 +4,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import remove_weight_norm, weight_norm
 from torch.nn.modules.utils import consume_prefix_in_state_dict_if_present
-from typing import Tuple
+from typing import Optional, Tuple
 
 from hifigan.utils import get_padding
-
+from hifigan.constants import UNIT_MODE, MEL_SPECTROGRAM_MODE
 LRELU_SLOPE = 0.1
 
 
@@ -15,6 +15,7 @@ class HifiganGenerator(torch.nn.Module):
     def __init__(
         self,
         in_channels: int = 128,
+        unit_nums: Optional[int] = None,
         resblock_dilation_sizes: Tuple[Tuple[int, ...], ...] = (
             (1, 3, 5),
             (1, 3, 5),
@@ -30,6 +31,7 @@ class HifiganGenerator(torch.nn.Module):
         r"""HiFiGAN Generator
         Args:
             in_channels (int): number of input channels.
+            unit_nums (Optional[int]): number of HuBERT label classes when HuBERT label is used as input.
             resblock_dilation_sizes (Tuple[Tuple[int, ...], ...]): list of dilation values in each layer of a `ResBlock`.
             resblock_kernel_sizes (Tuple[int, ...]): list of kernel sizes for each `ResBlock`.
             upsample_kernel_sizes (Tuple[int, ...]): list of kernel sizes for each transposed convolution.
@@ -40,12 +42,17 @@ class HifiganGenerator(torch.nn.Module):
             sample_rate (int): sample rate of the generated audio.
         """
         super().__init__()
+        self.mode = UNIT_MODE if unit_nums is not None else MEL_SPECTROGRAM_MODE
         self.inference_padding = inference_padding
         self.num_kernels = len(resblock_kernel_sizes)
         self.num_upsamples = len(upsample_factors)
         self.sample_rate = sample_rate
 
         # initial upsampling layers
+        if self.mode == UNIT_MODE:
+            # lookup table as in https://arxiv.org/abs/2104.00355
+            # The extra embedding to the end is used for padding in dataset collating.
+            self.lut = nn.Embedding(unit_nums+1, in_channels)
         self.conv_pre = weight_norm(
             nn.Conv1d(in_channels, upsample_initial_channel, 7, 1, padding=3)
         )
@@ -78,6 +85,16 @@ class HifiganGenerator(torch.nn.Module):
         self.conv_post = weight_norm(nn.Conv1d(ch, 1, 7, 1, padding=3))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+
+        Args:
+            x (torch.Tensor): mel spectrogram or unit sequence
+
+        Returns:
+            torch.Tensor: generated waveform
+        """
+        if self.mode == UNIT_MODE:
+            x = self.lut(x).transpose(-1, -2)
         o = self.conv_pre(x)
         for i in range(self.num_upsamples):
             o = F.leaky_relu(o, LRELU_SLOPE)
