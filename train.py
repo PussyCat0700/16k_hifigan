@@ -388,7 +388,7 @@ if __name__ == "__main__":
     logger.handlers.clear()
 
     world_size = torch.cuda.device_count()
-    max_updates_allowed = 1_000_000 if not args.finetune else 500_000
+    max_updates_allowed = 600_000
     args.max_updates = max_updates_allowed
     args.mode = UNIT_MODE if args.km_subdir is not None else MEL_SPECTROGRAM_MODE
     if world_size > 1:
