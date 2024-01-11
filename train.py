@@ -23,7 +23,7 @@ from hifigan.discriminator import (
     discriminator_loss,
     generator_loss,
 )
-from hifigan.dataset import HuBERTLabelDataset, MelDataset, LogMelSpectrogram
+from hifigan.dataset import HuBERTLabelDataset, LRS3MelDataset, MelDataset, LogMelSpectrogram
 from hifigan.utils import load_checkpoint, save_checkpoint, plot_spectrogram
 
 
@@ -119,11 +119,18 @@ def train_model(rank, world_size, args):
         **common_args
     }
     if args.mode == MEL_SPECTROGRAM_MODE:
-        train_dataset = MelDataset(
-            finetune=args.finetune,
-            hop_length=HOP_LENGTH,
-            **common_train_args,
-        )
+        if not args.with_lrs3:
+            train_dataset = MelDataset(
+                finetune=args.finetune,
+                hop_length=HOP_LENGTH,
+                **common_train_args,
+            )
+        else:
+            train_dataset = LRS3MelDataset(
+                npy_postfix=args.npy,
+                hop_length=HOP_LENGTH,
+                **common_train_args,
+            )
     elif args.mode == UNIT_MODE:
         train_dataset = HuBERTLabelDataset(
             sub_dirname=args.km_subdir,
@@ -143,11 +150,18 @@ def train_model(rank, world_size, args):
     )
 
     if args.mode == MEL_SPECTROGRAM_MODE:
-        validation_dataset = MelDataset(
-            finetune=args.finetune,
-            hop_length=HOP_LENGTH,
-            **common_valid_args,
-        )
+        if not args.with_lrs3:
+            validation_dataset = MelDataset(
+                finetune=args.finetune,
+                hop_length=HOP_LENGTH,
+                **common_valid_args,
+            )
+        else:
+            validation_dataset = LRS3MelDataset(
+                npy_postfix=args.npy,
+                hop_length=HOP_LENGTH,
+                **common_valid_args,
+            )
     elif args.mode == UNIT_MODE:
         validation_dataset = HuBERTLabelDataset(
             sub_dirname=args.km_subdir,
@@ -324,10 +338,6 @@ def train_model(rank, world_size, args):
                             best=new_best,
                             logger=logger,
                         )
-                    if global_step > args.max_updates:
-                        break
-        if global_step > args.max_updates:
-            break
 
         scheduler_discriminator.step()
         scheduler_generator.step()
@@ -373,6 +383,11 @@ if __name__ == "__main__":
         help="subdir relative to dataset_dir containing .km hubert label text records",
         type=str,
     )
+    parser.add_argument(
+        "--npy",
+        help=".npy file postfix saved in LRS3",
+        type=str,
+    )
     args = parser.parse_args()
 
     # display training setup info
@@ -391,6 +406,7 @@ if __name__ == "__main__":
     max_updates_allowed = 600_000
     args.max_updates = max_updates_allowed
     args.mode = UNIT_MODE if args.km_subdir is not None else MEL_SPECTROGRAM_MODE
+    args.with_lrs3 = args.npy is not None
     if world_size > 1:
         mp.spawn(
             train_model,

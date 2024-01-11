@@ -204,3 +204,92 @@ class HuBERTLabelDataset(BaseDataset):
             )
 
         return wav, src_label.unsqueeze(0), tgt_logmel
+    
+class LRS3MelDataset(Dataset):
+    def __init__(
+        self,
+        root: Path,
+        segment_length: int,
+        sample_rate: int,
+        hop_length: int,
+        train: bool = True,
+        npy_postfix: str = None,
+    ):
+        self.root = root
+
+        self.segment_length = segment_length
+        self.sample_rate = sample_rate
+        self.hop_length = hop_length
+        self.train = train
+        self.finetune = npy_postfix is not None
+
+        file_path = "train.tsv" if train else "valid.tsv"
+        file_path = root / file_path
+        with open(file_path, "r") as f:
+            self.metadata = f.readlines()
+        self.metadata = [str(root.parent / "audio" / x.split("\t")[0].strip()) for x in self.metadata[1:]]
+        self.wav_paths = [x+'.wav' for x in self.metadata]
+        if self.finetune:
+            self.mel_paths = [x+f"_mel_{npy_postfix}.npy" for x in self.metadata]
+
+        self.logmel = LogMelSpectrogram()
+
+    def __getitem__(self, index):
+        wav_path = self.wav_paths[index]
+
+        info = torchaudio.info(wav_path)
+        if info.sample_rate != self.sample_rate:
+            raise ValueError(
+                f"Sample rate {info.sample_rate} doesn't match target of {self.sample_rate}"
+            )
+
+        if self.finetune:
+            mel_path = self.mel_paths[index]
+            src_logmel = torch.from_numpy(np.load(mel_path)).transpose(-1, -2)
+            src_logmel = src_logmel.unsqueeze(0)
+
+            mel_frames_per_segment = math.ceil(self.segment_length / self.hop_length)
+            mel_diff = src_logmel.size(-1) - mel_frames_per_segment if self.train else 0
+            mel_offset = random.randint(0, max(mel_diff, 0))
+
+            frame_offset = self.hop_length * mel_offset
+        else:
+            frame_diff = info.num_frames - self.segment_length
+            frame_offset = random.randint(0, max(frame_diff, 0))
+
+        wav, _ = torchaudio.load(
+            wav_path,
+            frame_offset=frame_offset if self.train else 0,
+            num_frames=self.segment_length if self.train else -1,
+        )
+
+        if wav.size(-1) < self.segment_length:
+            wav = F.pad(wav, (0, self.segment_length - wav.size(-1)))
+
+        if not self.finetune and self.train:
+            gain = random.random() * (0.99 - 0.4) + 0.4
+            flip = -1 if random.random() > 0.5 else 1
+            wav = flip * gain * wav / max(wav.abs().max(), 1e-5)
+
+        tgt_logmel = self.logmel(wav.unsqueeze(0)).squeeze(0)
+
+        if self.finetune:
+            if self.train:
+                src_logmel = src_logmel[
+                    :, :, mel_offset : mel_offset + mel_frames_per_segment
+                ]
+
+            if src_logmel.size(-1) < mel_frames_per_segment:
+                src_logmel = F.pad(
+                    src_logmel,
+                    (0, mel_frames_per_segment - src_logmel.size(-1)),
+                    "constant",
+                    src_logmel.min(),
+                )
+        else:
+            src_logmel = tgt_logmel.clone()
+
+        return wav, src_logmel, tgt_logmel
+    
+    def __len__(self):
+        return len(self.metadata)
