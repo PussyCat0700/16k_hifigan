@@ -1,5 +1,6 @@
 import argparse
 import logging
+import math
 import os
 from pathlib import Path
 
@@ -198,7 +199,7 @@ def train_model(rank, world_size, args):
     if args.finetune:
         global_step, best_loss = 0, float("inf")
 
-    n_epochs = int(args.max_updates/(len(train_loader)*world_size))
+    n_epochs = math.ceil(args.max_updates/(len(train_loader)*world_size))
     start_epoch = global_step // len(train_loader) + 1
 
     logger.info("**" * 40)

@@ -225,8 +225,7 @@ class LRS3MelDataset(Dataset):
 
         file_path = "train.tsv" if train else "valid.tsv"
         file_path = root / file_path
-        with open(file_path, "r") as f:
-            self.metadata = f.readlines()
+        self.metadata, inds, tot, sizes = self.load_audio_visual_simple(file_path, 500, None)
         self.metadata = [str(root.parent / "audio" / x.split("\t")[0].strip()) for x in self.metadata[1:]]
         self.wav_paths = [x+'.wav' for x in self.metadata]
         if self.finetune:
@@ -234,6 +233,34 @@ class LRS3MelDataset(Dataset):
 
         self.logmel = LogMelSpectrogram()
 
+    def load_audio_visual_simple(self, manifest_path, max_keep, min_keep):
+        n_long, n_short = 0, 0
+        names, inds, sizes = [], [], []
+
+        with open(manifest_path) as f:
+            root = f.readline().strip()
+            for ind, line in enumerate(f):
+                items = line.strip().split("\t")
+                sz = int(items[-2]) # 
+                if min_keep is not None and sz < min_keep:
+                    n_short += 1
+                elif max_keep is not None and sz > max_keep:
+                    n_long += 1
+                else:
+                    audio_id = items[0]
+                    names.append(audio_id)
+                    inds.append(ind)
+                    sizes.append(sz)
+        tot = ind + 1
+        print(
+            (
+                f"max_keep={max_keep}, min_keep={min_keep}, "
+                f"loaded {len(names)}, skipped {n_short} short and {n_long} long, "
+                f"longest-loaded={max(sizes)}, shortest-loaded={min(sizes)}"
+            )
+        )
+        return names, inds, tot, sizes
+    
     def __getitem__(self, index):
         wav_path = self.wav_paths[index]
 
