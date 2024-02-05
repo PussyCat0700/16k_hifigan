@@ -7,14 +7,14 @@ from torch.nn.modules.utils import consume_prefix_in_state_dict_if_present
 from typing import Optional, Tuple
 
 from hifigan.utils import get_padding
-from hifigan.constants import UNIT_MODE, MEL_SPECTROGRAM_MODE
+from hifigan.constants import UNIT_MODE, MEL_SPECTROGRAM_MODE, mel_bins
 LRELU_SLOPE = 0.1
 
 
 class HifiganGenerator(torch.nn.Module):
     def __init__(
         self,
-        in_channels: int = 128,
+        in_channels: int = mel_bins,
         unit_nums: Optional[int] = None,
         resblock_dilation_sizes: Tuple[Tuple[int, ...], ...] = (
             (1, 3, 5),

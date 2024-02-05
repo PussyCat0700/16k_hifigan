@@ -404,10 +404,10 @@ if __name__ == "__main__":
     logger.handlers.clear()
 
     world_size = torch.cuda.device_count()
-    max_updates_allowed = 600_000
+    max_updates_allowed = 400_000*8
     args.max_updates = max_updates_allowed
     args.mode = UNIT_MODE if args.km_subdir is not None else MEL_SPECTROGRAM_MODE
-    args.with_lrs3 = args.npy is not None
+    args.with_lrs3 = 'lrs3' in str(args.dataset_dir)
     if world_size > 1:
         mp.spawn(
             train_model,

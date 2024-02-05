@@ -9,10 +9,11 @@ from torch.utils.data import Dataset
 
 import torchaudio
 import torchaudio.transforms as transforms
+from hifigan.constants import mel_bins
 
 
 class LogMelSpectrogram(torch.nn.Module):
-    def __init__(self, n_fft=512, num_mels=128, hop_size=160, win_size=400):
+    def __init__(self, n_fft=512, num_mels=mel_bins, hop_size=160, win_size=400):
         super().__init__()
         self.n_fft=n_fft
         self.hop_size=hop_size
