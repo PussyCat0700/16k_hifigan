@@ -12,6 +12,8 @@ from tqdm import tqdm
 def process_wav(in_path, out_path, sample_rate):
     wav, sr = torchaudio.load(in_path)
     wav = resample(wav, sr, sample_rate)
+    # Convert the waveform to 16-bit signed integers
+    wav = (wav * 32767.0).short()
     torchaudio.save(out_path, wav, sample_rate)
     return out_path, wav.size(-1) / sample_rate
 
