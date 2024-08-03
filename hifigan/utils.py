@@ -33,9 +33,10 @@ def save_checkpoint(
     best,
     logger,
 ):
+    is_ddp = isinstance(generator, torch.nn.parallel.DistributedDataParallel)
     state = {
         "generator": {
-            "model": generator.state_dict(),
+            "model": generator.module.state_dict() if is_ddp else generator.state_dict(),
             "optimizer": optimizer_generator.state_dict(),
             "scheduler": scheduler_generator.state_dict(),
         },

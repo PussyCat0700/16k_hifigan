@@ -4,7 +4,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Tuple, List
 
-from hifigan.utils import get_padding
+def get_padding(k, d):
+    return int((k * d - d) / 2)
 
 
 LRELU_SLOPE = 0.1
