@@ -50,9 +50,12 @@ CHECKPOINT_INTERVAL = 5000
 
 
 def train_model(rank, world_size, args):
-    if rank==0 and args.run_name is not None:
-        proj_name = os.path.basename(os.path.abspath(args.checkpoint_dir))
-        wandb.init(project=proj_name, name=args.run_name, sync_tensorboard=True)
+    if rank==0 and args.wandb:
+        full_path = os.path.abspath(args.checkpoint_dir)
+        pardir = os.path.abspath(f'{full_path}/{os.pardir}')
+        proj_name = os.path.basename(pardir)
+        run_name = os.path.basename(full_path)
+        wandb.init(project=proj_name, name=run_name, sync_tensorboard=True)
     
     dist.init_process_group(
         "nccl",
@@ -83,10 +86,6 @@ def train_model(rank, world_size, args):
     elif args.mode == UNIT_MODE:
         generator = HifiganGenerator(unit_nums=KMEANS_CLASSES, upsample_kernel_sizes=(20, 8, 8, 4), upsample_factors=(10, 4, 4, 2)).to(rank)
     discriminator = HifiganDiscriminator().to(rank)
-
-    generator = DDP(generator, device_ids=[rank])
-    discriminator = DDP(discriminator, device_ids=[rank])
-
     optimizer_generator = optim.AdamW(
         generator.parameters(),
         lr=BASE_LEARNING_RATE if not args.finetune else FINETUNE_LEARNING_RATE,
@@ -106,6 +105,29 @@ def train_model(rank, world_size, args):
     scheduler_discriminator = optim.lr_scheduler.ExponentialLR(
         optimizer_discriminator, gamma=LEARNING_RATE_DECAY
     )
+    
+    if args.resume is not None:
+        global_step, best_loss = load_checkpoint(
+            load_path=args.resume,
+            generator=generator,
+            discriminator=discriminator,
+            optimizer_generator=optimizer_generator,
+            optimizer_discriminator=optimizer_discriminator,
+            scheduler_generator=scheduler_generator,
+            scheduler_discriminator=scheduler_discriminator,
+            rank=rank,
+            logger=logger,
+            finetune=args.finetune,
+        )
+    else:
+        global_step, best_loss = 0, float("inf")
+
+    if args.finetune:
+        global_step, best_loss = 0, float("inf")
+
+    generator = DDP(generator, device_ids=[rank])
+    discriminator = DDP(discriminator, device_ids=[rank])
+
     common_args = {
         'root':args.dataset_dir,
         'segment_length':SEGMENT_LENGTH,
@@ -179,25 +201,6 @@ def train_model(rank, world_size, args):
     )
 
     melspectrogram = LogMelSpectrogram().to(rank)
-
-    if args.resume is not None:
-        global_step, best_loss = load_checkpoint(
-            load_path=args.resume,
-            generator=generator,
-            discriminator=discriminator,
-            optimizer_generator=optimizer_generator,
-            optimizer_discriminator=optimizer_discriminator,
-            scheduler_generator=scheduler_generator,
-            scheduler_discriminator=scheduler_discriminator,
-            rank=rank,
-            logger=logger,
-            finetune=args.finetune,
-        )
-    else:
-        global_step, best_loss = 0, float("inf")
-
-    if args.finetune:
-        global_step, best_loss = 0, float("inf")
 
     n_epochs = math.ceil(args.max_updates/(len(train_loader)*world_size))
     start_epoch = global_step // len(train_loader) + 1
@@ -375,9 +378,9 @@ if __name__ == "__main__":
         action="store_true",
     )
     parser.add_argument(
-        "--run_name",
-        help="wandb run name",
-        type=str,
+        "--wandb",
+        help="wandb enable sign",
+        action='store_true',
     )
     parser.add_argument(
         "--km_subdir",

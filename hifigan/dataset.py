@@ -230,7 +230,8 @@ class LRS3MelDataset(Dataset):
         self.metadata = [str(root.parent / "audio" / x.split("\t")[0].strip()) for x in self.metadata[1:]]
         self.wav_paths = [x+'.wav' for x in self.metadata]
         if self.finetune:
-            self.mel_paths = [x+f"_mel_{npy_postfix}.npy" for x in self.metadata]
+            # expecting npy_postfix be like 433h_lrs3
+            self.mel_paths = [x+f"_{npy_postfix}.npy" for x in self.metadata]
 
         self.logmel = LogMelSpectrogram()
 
@@ -273,7 +274,7 @@ class LRS3MelDataset(Dataset):
 
         if self.finetune:
             mel_path = self.mel_paths[index]
-            src_logmel = torch.from_numpy(np.load(mel_path)).transpose(-1, -2)
+            src_logmel = torch.from_numpy(np.load(mel_path))
             src_logmel = src_logmel.unsqueeze(0)
 
             mel_frames_per_segment = math.ceil(self.segment_length / self.hop_length)
