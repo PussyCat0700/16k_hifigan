@@ -71,8 +71,10 @@ def load_checkpoint(
 ):
     logger.info(f"Loading checkpoint from {load_path}")
     checkpoint = torch.load(load_path, map_location={"cuda:0": f"cuda:{rank}"})
-    generator.load_state_dict(checkpoint["generator"]["model"])
-    discriminator.load_state_dict(checkpoint["discriminator"]["model"])
+    incompatible_keys = generator.load_state_dict({k.replace("module.", ""): v for k, v in checkpoint["generator"]["model"].items()}, strict=False)
+    print('incompatible keys:\n')
+    print(incompatible_keys)
+    discriminator.load_state_dict({k.replace("module.", ""): v for k, v in checkpoint["discriminator"]["model"].items()})
     if not finetune:
         optimizer_generator.load_state_dict(checkpoint["generator"]["optimizer"])
         scheduler_generator.load_state_dict(checkpoint["generator"]["scheduler"])

@@ -26,6 +26,7 @@ from hifigan.discriminator import (
 )
 from hifigan.dataset import HuBERTLabelDataset, LRS3MelDataset, MelDataset, LogMelSpectrogram
 from hifigan.utils import load_checkpoint, save_checkpoint, plot_spectrogram
+import light_hf_proxy
 
 
 logging.basicConfig(level=logging.DEBUG)
