@@ -76,7 +76,15 @@ def load_checkpoint(
     print(incompatible_keys)
     discriminator.load_state_dict({k.replace("module.", ""): v for k, v in checkpoint["discriminator"]["model"].items()})
     if not finetune:
-        optimizer_generator.load_state_dict(checkpoint["generator"]["optimizer"])
+        try:
+            optimizer_generator.load_state_dict(checkpoint["generator"]["optimizer"])
+        except:
+            print('direct loading failed. Giving up param_groups.')
+            # state only
+            optimizer_generator.load_state_dict({
+                'state': checkpoint["generator"]["optimizer"]['state'],
+                'param_groups': optimizer_generator.state_dict()['param_groups']
+            })
         scheduler_generator.load_state_dict(checkpoint["generator"]["scheduler"])
         optimizer_discriminator.load_state_dict(
             checkpoint["discriminator"]["optimizer"]
