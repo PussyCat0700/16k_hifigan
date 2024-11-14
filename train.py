@@ -24,7 +24,7 @@ from hifigan.discriminator import (
     discriminator_loss,
     generator_loss,
 )
-from hifigan.dataset import HuBERTLabelDataset, LRS3MelDataset, MelDataset, LogMelSpectrogram
+from hifigan.dataset import HuBERTLabelDataset, LRS3Dataset, MelDataset, LogMelSpectrogram
 from hifigan.utils import load_checkpoint, save_checkpoint, plot_spectrogram
 import light_hf_proxy
 
@@ -150,8 +150,8 @@ def train_model(rank, world_size, args):
                 **common_train_args,
             )
         else:
-            train_dataset = LRS3MelDataset(
-                npy_postfix=args.npy,
+            train_dataset = LRS3Dataset(
+                finetune_path=args.ft_path,
                 hop_length=HOP_LENGTH,
                 **common_train_args,
             )
@@ -181,8 +181,8 @@ def train_model(rank, world_size, args):
                 **common_valid_args,
             )
         else:
-            validation_dataset = LRS3MelDataset(
-                npy_postfix=args.npy,
+            validation_dataset = LRS3Dataset(
+                finetune_path=args.ft_path,
                 hop_length=HOP_LENGTH,
                 **common_valid_args,
             )
@@ -389,8 +389,8 @@ if __name__ == "__main__":
         type=str,
     )
     parser.add_argument(
-        "--npy",
-        help=".npy file postfix saved in LRS3",
+        "--ft_path",
+        help="Waveforms for finetuning saved with .mp3 format as in structure of LRS dataset.",
         type=str,
     )
     args = parser.parse_args()
@@ -412,7 +412,7 @@ if __name__ == "__main__":
     args.max_updates = max_updates_allowed
     args.mode = UNIT_MODE if args.km_subdir is not None else MEL_SPECTROGRAM_MODE
     args.with_lrs3 = 'lrs3' in str(args.dataset_dir) or 'lrs2' in str(args.dataset_dir)
-    logger.info(f'with mel={args.with_lrs3}')
+    logger.info(f'{args.with_lrs3=}')
     if world_size > 1:
         mp.spawn(
             train_model,
