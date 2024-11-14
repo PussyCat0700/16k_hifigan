@@ -4,6 +4,7 @@ import math
 import os
 from pathlib import Path
 
+import nisqalib
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
@@ -45,7 +46,7 @@ BETAS = (0.8, 0.99)
 LEARNING_RATE_DECAY = 0.999
 WEIGHT_DECAY = 1e-5
 LOG_INTERVAL = 5
-VALIDATION_INTERVAL = 1000
+VALIDATION_INTERVAL = 5000
 NUM_GENERATED_EXAMPLES = 10
 CHECKPOINT_INTERVAL = 5000
 
@@ -126,8 +127,12 @@ def train_model(rank, world_size, args):
     if args.finetune:
         global_step, best_loss = 0, float("inf")
 
+    # TODO load
+    best_mos = 0
+
     generator = DDP(generator, device_ids=[rank])
     discriminator = DDP(discriminator, device_ids=[rank])
+    nisqa_model = nisqalib.NisqaModel("nisqa")
 
     common_args = {
         'root':args.dataset_dir,
@@ -283,6 +288,7 @@ def train_model(rank, world_size, args):
                 generator.eval()
 
                 average_validation_loss = 0
+                average_validation_mos = 0
                 for j, (wavs, inputs, tgts) in enumerate(validation_loader, 1):
                     wavs, inputs, tgts = wavs.to(rank), inputs.to(rank), tgts.to(rank)
 
@@ -293,9 +299,13 @@ def train_model(rank, world_size, args):
                         length = min(mels_.size(-1), tgts.size(-1))
 
                         loss_mel = F.l1_loss(mels_[..., :length], tgts[..., :length])
+                        result = nisqa_model.predict(wavs_.squeeze(1).cpu().numpy(), 16000)
 
                     average_validation_loss += (
                         loss_mel.item() - average_validation_loss
+                    ) / j
+                    average_validation_mos += (
+                        result["mos_pred"] - average_validation_mos
                     ) / j
 
                     if rank == 0:
@@ -319,15 +329,18 @@ def train_model(rank, world_size, args):
                     writer.add_scalar(
                         "validation/mel_loss", average_validation_loss, global_step
                     )
+                    writer.add_scalar(
+                        "validation/mos_pred", average_validation_mos, global_step
+                    )
                     logger.info(
-                        f"valid -- epoch: {epoch}, mel loss: {average_validation_loss:.4f}"
+                        f"valid -- epoch: {epoch}, nisqa mos: {average_validation_mos:.3f}, mel loss: {average_validation_loss:.3f}"
                     )
 
-                new_best = best_loss > average_validation_loss
+                new_best = best_mos > average_validation_mos
                 if new_best or global_step % CHECKPOINT_INTERVAL == 0:
                     if new_best:
-                        logger.info("-------- new best model found!")
-                        best_loss = average_validation_loss
+                        best_mos = average_validation_mos
+                        logger.info(f"-------- new best model found@{best_mos}!")
 
                     if rank == 0:
                         save_checkpoint(
