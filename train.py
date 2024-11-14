@@ -58,13 +58,13 @@ def train_model(rank, world_size, args):
         proj_name = os.path.basename(pardir)
         run_name = os.path.basename(full_path)
         wandb.init(project=proj_name, name=run_name, sync_tensorboard=True)
-    
-    dist.init_process_group(
-        "nccl",
-        rank=rank,
-        world_size=world_size,
-        init_method="tcp://localhost:54321",
-    )
+    if world_size > 1:
+        dist.init_process_group(
+            "nccl",
+            rank=rank,
+            world_size=world_size,
+            init_method="tcp://localhost:54321",
+        )
 
     log_dir = args.checkpoint_dir / "logs"
     log_dir.mkdir(exist_ok=True, parents=True)
@@ -129,9 +129,9 @@ def train_model(rank, world_size, args):
 
     # TODO load
     best_mos = 0
-
-    generator = DDP(generator, device_ids=[rank])
-    discriminator = DDP(discriminator, device_ids=[rank])
+    if world_size > 1:
+        generator = DDP(generator, device_ids=[rank])
+        discriminator = DDP(discriminator, device_ids=[rank])
     nisqa_model = nisqalib.NisqaModel("nisqa")
 
     common_args = {
@@ -167,7 +167,7 @@ def train_model(rank, world_size, args):
             hop_length=HOP_LENGTH_HUBERT,
             **common_train_args,
         )
-    train_sampler = DistributedSampler(train_dataset, drop_last=True)
+    train_sampler = DistributedSampler(train_dataset, drop_last=True) if world_size > 1 else None
     train_loader = DataLoader(
         train_dataset,
         batch_size=BATCH_SIZE,
@@ -219,7 +219,8 @@ def train_model(rank, world_size, args):
     logger.info("**" * 40 + "\n")
 
     for epoch in range(start_epoch, n_epochs + 1):
-        train_sampler.set_epoch(epoch)
+        if world_size > 1:
+            train_sampler.set_epoch(epoch)
 
         generator.train()
         discriminator.train()
@@ -363,8 +364,8 @@ def train_model(rank, world_size, args):
         logger.info(
             f"train -- epoch: {epoch}, mel loss: {average_loss_mel:.4f}, generator loss: {average_loss_generator:.4f}, discriminator loss: {average_loss_discriminator:.4f}"
         )
-
-    dist.destroy_process_group()
+    if world_size > 1:
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":
