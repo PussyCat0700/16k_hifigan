@@ -274,7 +274,7 @@ class LRS3MelDataset(Dataset):
 
         if self.finetune:
             mel_path = self.mel_paths[index]
-            src_logmel = torch.from_numpy(np.load(mel_path))
+            src_logmel = torch.from_numpy(np.load(mel_path)).transpose(-1, -2)
             src_logmel = src_logmel.unsqueeze(0)
 
             mel_frames_per_segment = math.ceil(self.segment_length / self.hop_length)

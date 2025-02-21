@@ -34,7 +34,6 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
-BATCH_SIZE = 8
 SEGMENT_LENGTH = 8320
 HOP_LENGTH = 160
 HOP_LENGTH_HUBERT = 320
@@ -129,6 +128,8 @@ def train_model(rank, world_size, args):
 
     # TODO load
     best_mos = 0
+    patience_counter = 0
+    should_stop = False
     if world_size > 1:
         generator = DDP(generator, device_ids=[rank])
         discriminator = DDP(discriminator, device_ids=[rank])
@@ -170,7 +171,7 @@ def train_model(rank, world_size, args):
     train_sampler = DistributedSampler(train_dataset, drop_last=True) if world_size > 1 else None
     train_loader = DataLoader(
         train_dataset,
-        batch_size=BATCH_SIZE,
+        batch_size=args.batch_size,
         sampler=train_sampler,
         num_workers=8 if world_size>1 else 0,
         pin_memory=True,
@@ -212,7 +213,7 @@ def train_model(rank, world_size, args):
     start_epoch = global_step // len(train_loader) + 1
 
     logger.info("**" * 40)
-    logger.info(f"batch size: {BATCH_SIZE}")
+    logger.info(f"batch size: {args.batch_size}")
     logger.info(f"iterations per epoch: {len(train_loader)}")
     logger.info(f"total of epochs: {n_epochs}")
     logger.info(f"started at epoch: {start_epoch}")
@@ -337,12 +338,8 @@ def train_model(rank, world_size, args):
                         f"valid -- epoch: {epoch}, nisqa mos: {average_validation_mos:.3f}, mel loss: {average_validation_loss:.3f}"
                     )
 
-                new_best = best_mos > average_validation_mos
+                new_best = best_mos < average_validation_mos
                 if new_best or global_step % CHECKPOINT_INTERVAL == 0:
-                    if new_best:
-                        best_mos = average_validation_mos
-                        logger.info(f"-------- new best model found@{best_mos}!")
-
                     if rank == 0:
                         save_checkpoint(
                             checkpoint_dir=args.checkpoint_dir,
@@ -357,6 +354,20 @@ def train_model(rank, world_size, args):
                             best=new_best,
                             logger=logger,
                         )
+                if new_best:
+                    best_mos = average_validation_mos
+                    logger.info(f"-------- new best model found@{best_mos}!")
+                    patience_counter = 0
+                else:
+                    patience_counter += 1
+
+                should_stop = patience_counter >= args.patience
+                if should_stop:
+                    logger.info(f"early stopping triggered with {patience_counter=}")
+                    break
+        if should_stop:
+            break
+                    
 
         scheduler_discriminator.step()
         scheduler_generator.step()
@@ -407,6 +418,22 @@ if __name__ == "__main__":
         help=".npy file postfix saved in LRS3",
         type=str,
     )
+    parser.add_argument(
+        "--patience",
+        help='early stopping (MOS)',
+        type=int,
+        default=3,
+    )
+    parser.add_argument(
+        "--max_updates",
+        type=int,
+        default=400_000,
+    )
+    parser.add_argument(
+        '--batch_size',
+        type=int,
+        default=8,
+    )
     args = parser.parse_args()
 
     # display training setup info
@@ -422,8 +449,6 @@ if __name__ == "__main__":
     logger.handlers.clear()
 
     world_size = torch.cuda.device_count()
-    max_updates_allowed = 160_000
-    args.max_updates = max_updates_allowed
     args.mode = UNIT_MODE if args.km_subdir is not None else MEL_SPECTROGRAM_MODE
     args.with_lrs3 = 'lrs3' in str(args.dataset_dir) or 'lrs2' in str(args.dataset_dir)
     logger.info(f'with mel={args.with_lrs3}')
